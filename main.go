@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator"
 
 	firebase "firebase.google.com/go/v4"
 	"google.golang.org/api/iterator"
@@ -13,6 +14,7 @@ import (
 )
 
 var app *firebase.App
+var validate *validator.Validate
 
 func init() {
 	opt := option.WithCredentialsFile("secrets/albums-api-golang-firebase-adminsdk-9eoxs-fca0ed4986.json")
@@ -21,13 +23,14 @@ func init() {
 	if err != nil {
 		log.Fatalf("error initializing app: %v\n", err)
 	}
+	validate = validator.New()
 }
 
 type album struct {
-	ID     string  `json:"id"`
-	Title  string  `json:"title"`
-	Artist string  `json:"artist"`
-	Price  float64 `json:"price"`
+	ID     string  `json:"id" binding:"required"`
+	Title  string  `json:"title" binding:"required"`
+	Artist string  `json:"artist" binding:"required"`
+	Price  float64 `json:"price" binding:"required"`
 }
 
 func main() {
@@ -90,8 +93,13 @@ func getAlbumByID(c *gin.Context) {
 }
 func postAlbums(c *gin.Context) {
 	var newAlbum album
-	if err := c.BindJSON(&newAlbum); err != nil {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "Invalid JSON supplied"})
+	if err := c.ShouldBindJSON(&newAlbum); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := validate.Struct(newAlbum); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -114,8 +122,13 @@ func postAlbums(c *gin.Context) {
 func patchAlbumByID(c *gin.Context) {
 	id := c.Param("id")
 	var newAlbum album
-	if err := c.BindJSON(&newAlbum); err != nil {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "Invalid JSON supplied"})
+	if err := c.ShouldBindJSON(&newAlbum); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := validate.Struct(newAlbum); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -134,7 +147,6 @@ func patchAlbumByID(c *gin.Context) {
 
 	c.IndentedJSON(http.StatusOK, newAlbum)
 }
-
 func deleteAlbumByID(c *gin.Context) {
 	id := c.Param("id")
 
