@@ -1,22 +1,33 @@
 package main
 
 import (
+	"context"
+	"log"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	firebase "firebase.google.com/go/v4"
+	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
 )
+
+var app *firebase.App
+
+func init() {
+	opt := option.WithCredentialsFile("secrets/albums-api-golang-firebase-adminsdk-9eoxs-fca0ed4986.json")
+	var err error
+	app, err = firebase.NewApp(context.Background(), nil, opt)
+	if err != nil {
+		log.Fatalf("error initializing app: %v\n", err)
+	}
+}
 
 type album struct {
 	ID     string  `json:"id"`
 	Title  string  `json:"title"`
 	Artist string  `json:"artist"`
 	Price  float64 `json:"price"`
-}
-
-var albums = []album{
-	{ID: "1", Title: "Blue Train", Artist: "John Coltrane", Price: 56.99},
-	{ID: "2", Title: "Jeru", Artist: "Gerry Mulligan", Price: 17.99},
-	{ID: "3", Title: "Sarah Vaughan and Clifford Brown", Artist: "Sarah Vaughan", Price: 39.99},
 }
 
 func main() {
@@ -31,59 +42,114 @@ func main() {
 }
 
 func getAlbums(c *gin.Context) {
-	c.IndentedJSON(http.StatusOK, albums)
-}
-
-func postAlbums(c *gin.Context) {
-	var newAlbum album
-
-	if err := c.BindJSON(&newAlbum); err != nil {
+	client, err := app.Firestore(context.Background())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	defer client.Close()
 
-	albums = append(albums, newAlbum)
-	c.IndentedJSON(http.StatusCreated, newAlbum)
+	iter := client.Collection("albums").Documents(context.Background())
+	var albums []album
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		var a album
+		doc.DataTo(&a)
+		albums = append(albums, a)
+	}
+
+	c.IndentedJSON(http.StatusOK, albums)
 }
 
 func getAlbumByID(c *gin.Context) {
 	id := c.Param("id")
 
-	for _, a := range albums {
-		if a.ID == id {
-			c.IndentedJSON(http.StatusOK, a)
-			return
-		}
+	client, err := app.Firestore(context.Background())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
-	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "album not found"})
+	defer client.Close()
+
+	doc, err := client.Collection("albums").Doc(id).Get(context.Background())
+	if err != nil {
+		c.IndentedJSON(http.StatusNotFound, gin.H{"message": "album not found"})
+		return
+	}
+
+	var a album
+	doc.DataTo(&a)
+	c.IndentedJSON(http.StatusOK, a)
+}
+func postAlbums(c *gin.Context) {
+	var newAlbum album
+	if err := c.BindJSON(&newAlbum); err != nil {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "Invalid JSON supplied"})
+		return
+	}
+
+	client, err := app.Firestore(context.Background())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer client.Close()
+
+	_, err = client.Collection("albums").Doc(newAlbum.ID).Set(context.Background(), newAlbum)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.IndentedJSON(http.StatusCreated, newAlbum)
 }
 
 func patchAlbumByID(c *gin.Context) {
 	id := c.Param("id")
 	var newAlbum album
-
 	if err := c.BindJSON(&newAlbum); err != nil {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"message": "Invalid JSON supplied"})
 		return
 	}
 
-	for i, a := range albums {
-		if a.ID == id {
-			albums[i] = newAlbum
-			c.IndentedJSON(http.StatusOK, newAlbum)
-			return
-		}
+	client, err := app.Firestore(context.Background())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
-	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "album not found"})
+	defer client.Close()
+
+	_, err = client.Collection("albums").Doc(id).Set(context.Background(), newAlbum)
+	if err != nil {
+		c.IndentedJSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.IndentedJSON(http.StatusOK, newAlbum)
 }
 
 func deleteAlbumByID(c *gin.Context) {
 	id := c.Param("id")
 
-	for i, a := range albums {
-		if a.ID == id {
-			albums = append(albums[:i], albums[i+1:]...)
-			c.IndentedJSON(http.StatusOK, gin.H{"message": "album deleted"})
-			return
-		}
+	client, err := app.Firestore(context.Background())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
 	}
-	c.IndentedJSON(http.StatusNotFound, gin.H{"message": "album not found"})
+	defer client.Close()
+
+	_, err = client.Collection("albums").Doc(id).Delete(context.Background())
+	if err != nil {
+		c.IndentedJSON(http.StatusNotFound, gin.H{"message": "album not found"})
+		return
+	}
+
+	c.IndentedJSON(http.StatusOK, gin.H{"message": "album deleted"})
 }
